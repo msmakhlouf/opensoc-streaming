@@ -56,7 +56,6 @@ import backtype.storm.topology.TopologyBuilder;
 import backtype.storm.tuple.Fields;
 
 import com.opensoc.alerts.TelemetryAlertsBolt;
-import com.opensoc.alerts.adapters.HbaseWhiteAndBlacklistAdapter;
 import com.opensoc.alerts.interfaces.AlertsAdapter;
 import com.opensoc.enrichment.adapters.cif.CIFHbaseAdapter;
 import com.opensoc.enrichment.adapters.geo.GeoMysqlAdapter;
@@ -64,6 +63,7 @@ import com.opensoc.enrichment.adapters.host.HostFromPropertiesFileAdapter;
 import com.opensoc.enrichment.adapters.whois.WhoisHBaseAdapter;
 import com.opensoc.enrichment.common.GenericEnrichmentBolt;
 import com.opensoc.enrichment.interfaces.EnrichmentAdapter;
+import com.opensoc.filters.GenericMessageFilter;
 import com.opensoc.hbase.HBaseBolt;
 import com.opensoc.hbase.HBaseStreamPartitioner;
 import com.opensoc.hbase.TupleTableConfig;
@@ -72,6 +72,10 @@ import com.opensoc.helpers.topology.SettingsLoader;
 import com.opensoc.index.interfaces.IndexAdapter;
 import com.opensoc.indexing.TelemetryIndexingBolt;
 import com.opensoc.json.serialization.JSONKryoSerializer;
+import com.opensoc.parser.interfaces.MessageParser;
+import com.opensoc.parsing.AbstractParserBolt;
+import com.opensoc.parsing.GrokParserBolt;
+import com.opensoc.parsing.TelemetryParserBolt;
 
 public abstract class TopologyRunner {
 
@@ -350,6 +354,20 @@ public abstract class TopologyRunner {
 					"bolt.error");
 		}
 
+		if (config.getBoolean("bolt.grok.enabled")) {
+			String component_name = config.getString(
+					"bolt.error.indexing.name", "DefaultErrorIndexingBolt");
+
+			success = initializeGrokParserBolt(component_name);
+			terminalComponents.add(component_name);
+
+			System.out.println("[OpenSOC] ------Component " + component_name
+					+ " initialized with the following settings:");
+
+			SettingsLoader.printConfigOptions((PropertiesConfiguration) config,
+					"bolt.grok");
+		}
+		
 		if (config.containsKey("bolt.hbase.enabled")
 				&& config.getBoolean("bolt.hbase.enabled")) {
 			String component_name = config.getString("bolt.hbase.name",
@@ -479,7 +497,41 @@ public abstract class TopologyRunner {
 		}
 		return true;
 	}
+	
+	@SuppressWarnings("rawtypes")
+	private boolean initializeGrokParserBolt(String component_name) {
+			try {
+			
+			String messageUpstreamComponent = messageComponents.get(messageComponents.size()-1);
+			
+			System.out.println("[OpenSOC] ------" +  name + " is initializing from " + messageUpstreamComponent);
 
+			
+			
+			if(class_name == null)
+			{
+				System.out.println("[OpenSOC] Parser adapter not set.  Please set bolt.indexing.adapter in topology.conf");
+				throw new Exception("Parser adapter not set");
+			}
+			
+			GrokParserBolt grok_bolt = new GrokParserBolt();
+	        
+			builder.setBolt(name, grok_bolt,
+					config.getInt("bolt.grok.parallelism.hint"))
+					.shuffleGrouping(messageUpstreamComponent)
+					.setNumTasks(config.getInt("bolt.grok.num.tasks"));
+
+		} catch (Exception e) {
+			e.printStackTrace();
+			System.exit(0);
+		}
+
+		return true;
+
+	}
+
+
+	@SuppressWarnings("rawtypes")
 	private boolean initializeErrorIndexBolt(String component_name) {
 		try {
 			
@@ -634,7 +686,7 @@ public abstract class TopologyRunner {
 		return true;
 	}
 
-	@SuppressWarnings("rawtypes")
+	@SuppressWarnings({ "rawtypes", "unchecked" })
 	private boolean initializeAlerts(String topology_name, String name,
 			String alerts_path, JSONObject environment_identifier,
 			JSONObject topology_identifier) {
@@ -683,6 +735,7 @@ public abstract class TopologyRunner {
 		return true;
 	}
 
+	@SuppressWarnings("rawtypes")
 	private boolean initializeAlertIndexing(String name) {
 		
 		try{
@@ -806,6 +859,7 @@ public abstract class TopologyRunner {
 		return true;
 	}
 
+	@SuppressWarnings("rawtypes")
 	private boolean initializeIndexingBolt(String name) {
 		try {
 
@@ -943,10 +997,10 @@ public abstract class TopologyRunner {
 					.withRotationPolicy(rotationPolicy)
 					.withSyncPolicy(syncPolicy)
 					.addRotationAction(moveFileAction);
-			if (config.getString("bolt.hdfs.compression.codec.class") != null) {
-				hdfsBolt.withCompressionCodec(config.getString(
-						"bolt.hdfs.compression.codec.class").toString());
-			}
+//			if (config.getString("bolt.hdfs.compression.codec.class") != null) {
+//				((HdfsBolt) hdfsBolt).withCompressionCodec(config.getString(
+//						"bolt.hdfs.compression.codec.class").toString());
+//			}
 
 			builder.setBolt(name, hdfsBolt,
 					config.getInt("bolt.hdfs.parallelism.hint"))
